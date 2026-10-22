@@ -46,3 +46,6 @@ config.secret.json
 
 # Intermediate data outputs
 scripts/output/
+
+# Local Canvas credential
+secrets.json

@@ -341,9 +341,12 @@ async function checkSearchReadiness() {
         if (hasEmbeddings) {
             try {
                 const { data, error: fnError } = await supabaseClient.functions.invoke('embed-question', {
-                    body: { question: 'test' }
+                    // A readiness probe must never spend OpenAI tokens. The
+                    // Edge Function authenticates the user, then returns
+                    // immediately when health_check is true.
+                    body: { health_check: true }
                 });
-                semanticReady = !fnError;
+                semanticReady = !fnError && data?.ready === true;
             } catch {
                 // CORS or network error → function not deployed
             }
@@ -356,9 +359,9 @@ async function checkSearchReadiness() {
         } else {
             try {
                 const { data, error: fnError } = await supabaseClient.functions.invoke('generate-answer', {
-                    body: { question: 'test', context_talks: [] }
+                    body: { health_check: true }
                 });
-                setSearchReady('rag', !fnError || fnError.context?.status !== 404);
+                setSearchReady('rag', !fnError && data?.ready === true);
             } catch {
                 setSearchReady('rag', false);
             }
@@ -560,6 +563,9 @@ async function askQuestion() {
         html += '<div class="result-sources"><strong>Sources:</strong></div>';
         for (const talk of topTalks) {
             const talkBadge = similarityBadge(talk.avgSimilarity);
+            const evidence = talk.sentences
+                .map(sentence => `<li>${escapeHtml(sentence)}</li>`)
+                .join('');
             html += `<div class="result-card result-source">
                 <div class="result-card-header">
                     <div>
@@ -568,6 +574,10 @@ async function askQuestion() {
                     </div>
                     ${talkBadge}
                 </div>
+                <details class="citation-preview">
+                    <summary>View matched excerpts (${talk.sentences.length})</summary>
+                    <ul>${evidence}</ul>
+                </details>
             </div>`;
         }
         showResults('rag', html);
@@ -636,6 +646,7 @@ function groupByTalk(sentences) {
             title: talk.title,
             speaker: talk.speaker,
             url: talk.url,
+            sentences: talk.sentences,
             text: talk.sentences.join(' '),
             // TODO: Is average similarity the right metric? Alternatives worth researching:
             // - Max similarity (best single match per talk)

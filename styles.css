@@ -559,6 +559,28 @@ input:focus {
     padding: var(--spacing-sm) var(--spacing-md);
 }
 
+.citation-preview {
+    margin-top: var(--spacing-sm);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.citation-preview summary {
+    cursor: pointer;
+    color: var(--primary);
+}
+
+.citation-preview ul {
+    margin: var(--spacing-xs) 0 0;
+    padding-left: 1.25rem;
+    color: var(--text);
+    line-height: 1.6;
+}
+
+.citation-preview li + li {
+    margin-top: var(--spacing-xs);
+}
+
 /* Color-tinted RAG answer cards based on similarity */
 .result-card.rag-similarity-high {
     border-color: var(--success);

@@ -18,6 +18,7 @@ Prerequisites:
 import json
 import os
 import re
+from datetime import date
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -26,8 +27,8 @@ from tqdm import tqdm
 
 
 YEARS_TO_SCRAPE = 5
-START_YEAR = 2025 - YEARS_TO_SCRAPE
-END_YEAR = 2025
+END_YEAR = date.today().year
+START_YEAR = END_YEAR - YEARS_TO_SCRAPE
 OUTPUT_DIR = os.path.join('scripts', 'output')
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, 'talks.json')
 

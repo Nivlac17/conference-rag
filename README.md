@@ -72,6 +72,10 @@ Your AI assistant will automatically read [`ai_agent_instructions.md`](ai_agent_
 | **🧠 Semantic Search** | Vector similarity with pgvector | Embeddings + `embed-question` Edge Function |
 | **🤖 Ask a Question (RAG)** | AI-generated answers with sources | All Edge Functions deployed |
 
+### Custom Feature: Matched Excerpt Viewer
+
+Each RAG source card can be expanded to show the retrieved sentences that made that talk relevant. This gives the reader a quick way to inspect the evidence behind an answer before opening the original talk.
+
 ## 📁 Project Structure
 
 ```
@@ -111,6 +115,13 @@ conference-rag/
 | OpenAI API key | Server-side only via Edge Functions (in `config.secret.json`) |
 | Database access | Row Level Security policies |
 | Transport | HTTPS enforced by GitHub Pages |
+
+## 💸 Cost Controls
+
+- Supabase and GitHub Pages can run on their free tiers, subject to each service's limits.
+- OpenAI API usage is billed separately. Loading the page and checking function readiness do not call OpenAI; semantic/RAG searches and the bulk embedding script do.
+- If you want to avoid OpenAI charges, do not run `scripts/04_embed_data.py` or submit semantic/RAG searches. Keyword search only needs the imported text data.
+- Before enabling OpenAI calls, set an enforced hard usage limit on the OpenAI project that owns the API key. An alert by itself does not stop usage. Authentication also does not cap how many requests a signed-in user can make.
 
 ## 📚 Learning Objectives
 
