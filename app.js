@@ -32,7 +32,8 @@ function initializeSupabase() {
         try {
             supabaseClient = window.supabase.createClient(
                 SUPABASE_CONFIG.url,
-                SUPABASE_CONFIG.anonKey
+                SUPABASE_CONFIG.anonKey,
+                { auth: { flowType: 'pkce' } }
             );
             // Listen for auth state changes
             supabaseClient.auth.onAuthStateChange((event, session) => {
@@ -801,8 +802,9 @@ function recordPageView() {
     supabaseClient
         .from('page_views')
         .insert({
-            page_url: window.location.href,
-            user_agent: navigator.userAgent
+            // Never put query parameters, auth codes, or URL fragments into
+            // the publicly readable page_views table.
+            page_url: window.location.origin + window.location.pathname
         })
         .then(() => {
             // Query the total count
