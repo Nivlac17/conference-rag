@@ -21,7 +21,7 @@ Each generated answer lists source talks. The expandable “View matched excerpt
 
 The browser receives the Supabase project URL and publishable (anon) key from `config.public.json`. The key identifies the project but does not grant administrator access. Row Level Security (RLS) is the database boundary: browser requests are evaluated under the signed-in user's JWT and the policies on each table. The service-role/secret key bypasses RLS, so anyone who obtained it could read or change data with elevated access; it must stay server-side and out of GitHub. The OpenAI key is held as a Supabase Edge Function secret. The browser sends requests to an Edge Function, which checks the user's JWT before calling OpenAI, so the key is not shipped to the browser.
 
-Flow: browser (public Supabase config, user JWT) → authenticated Edge Function (server-side OpenAI secret) → OpenAI. Supabase RLS separately controls database reads and writes.
+Flow: browser (public Supabase config, user JWT) → authenticated Edge Function (server-side OpenAI secret and usage reservation) → OpenAI. Supabase RLS separately controls database reads and writes. A private database ledger reserves estimated maximum API costs before each website call and caps website reservations at $0.55; the bulk embedding script separately stops at $0.40.
 
 ### 2. Edge Functions and the secure middle
 
@@ -47,6 +47,8 @@ Complete these statements in your own words:
 
 - Conference talk records were imported into Supabase (25,696 sentence records from 431 talks).
 - The `embed-question` and `generate-answer` Edge Functions have been deployed.
-- The deployed functions intentionally remain not ready until an OpenAI key is configured as a Supabase function secret.
-- Embedding generation and semantic/RAG queries have not been run yet, pending an explicit cost limit and authorization.
+- The deployed functions intentionally remain not ready until a valid OpenAI key is configured as a Supabase function secret.
+- The local `OPENAI_API_KEY` was rejected by OpenAI. No embeddings completed, and no OpenAI token usage was recorded. Replace it with a freshly copied OpenAI API key before resuming.
+- Re-run `scripts/01_create_schema.py` after the budget-gate update; it installs the private usage ledger and server-only reservation RPC required before the app can make billable calls.
+- Semantic/RAG queries still need an end-to-end verification and screenshot.
 - Add the RAG screenshot only after completing a real end-to-end query.

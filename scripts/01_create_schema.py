@@ -135,6 +135,46 @@ $$;
 
 REVOKE ALL ON FUNCTION match_sentences(vector, int) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION match_sentences(vector, int) TO authenticated;
+
+-- A server-only, lifetime budget for OpenAI calls made by the public app.
+-- Local bulk embeddings are guarded separately by scripts/04_embed_data.py.
+CREATE TABLE IF NOT EXISTS openai_usage_budget (
+    id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id = TRUE),
+    reserved_usd NUMERIC NOT NULL DEFAULT 0 CHECK (reserved_usd >= 0 AND reserved_usd <= 0.55)
+);
+
+INSERT INTO openai_usage_budget (id, reserved_usd)
+VALUES (TRUE, 0)
+ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE openai_usage_budget ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE openai_usage_budget FROM PUBLIC, anon, authenticated;
+
+CREATE OR REPLACE FUNCTION public.reserve_openai_budget(p_amount NUMERIC)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+    changed_rows INTEGER;
+BEGIN
+    IF p_amount IS NULL OR p_amount <= 0 OR p_amount > 0.55 THEN
+        RETURN FALSE;
+    END IF;
+
+    UPDATE public.openai_usage_budget
+       SET reserved_usd = reserved_usd + p_amount
+     WHERE id = TRUE
+       AND reserved_usd + p_amount <= 0.55;
+
+    GET DIAGNOSTICS changed_rows = ROW_COUNT;
+    RETURN changed_rows = 1;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.reserve_openai_budget(NUMERIC) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.reserve_openai_budget(NUMERIC) TO service_role;
 """
 
     url = f"https://api.supabase.com/v1/projects/{SUPABASE_PROJECT_REF}/database/query"

@@ -120,8 +120,9 @@ conference-rag/
 
 - Supabase and GitHub Pages can run on their free tiers, subject to each service's limits.
 - OpenAI API usage is billed separately. Loading the page and checking function readiness do not call OpenAI; semantic/RAG searches and the bulk embedding script do.
+- The bulk embedding script preflights a conservative maximum and stops at $0.40. The website's Edge Functions reserve a conservative maximum in a private database ledger and stop when the shared app budget reaches $0.55. Run `scripts/01_create_schema.py` after updating to install that gate before configuring the OpenAI secret.
 - If you want to avoid OpenAI charges, do not run `scripts/04_embed_data.py` or submit semantic/RAG searches. Keyword search only needs the imported text data.
-- Before enabling OpenAI calls, set an enforced hard usage limit on the OpenAI project that owns the API key. An alert by itself does not stop usage. Authentication also does not cap how many requests a signed-in user can make.
+- These limits cover this assignment's bulk embeddings and website calls. Keep the OpenAI key dedicated to this project; other uses of the same key are outside this app's budget gate.
 
 ## 📚 Learning Objectives
 

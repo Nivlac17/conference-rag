@@ -35,8 +35,10 @@ This script:
 3. Saves results to `scripts/output/sentences_with_embeddings.json`
 4. Supports resuming if interrupted (your progress is saved!)
 
-> ⏱️ **This takes 10-15 minutes** and costs ~$0.60 in OpenAI API usage.
+> ⏱️ **This takes several minutes.** The original course estimate is about $0.60. This fork preflights a conservative maximum, saves after every batch, and stops if the embedding run could exceed $0.40. For the supplied sentence data, the conservative maximum is about $0.071.
 > 💰 **Your embeddings are safe**: They're saved to disk in `scripts/output/`, so even if the next step fails, you won't pay twice.
+
+The website functions also reserve their maximum estimated call cost in a private Supabase budget ledger before contacting OpenAI. The combined local embedding and website caps are below $1. Re-run `python scripts/01_create_schema.py` after updating this fork so the ledger and its server-only reservation function exist before setting the OpenAI secret.
 
 ### Step 5b: Update Database with Embeddings
 

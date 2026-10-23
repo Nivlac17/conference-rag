@@ -1,5 +1,6 @@
 import { corsHeaders, jsonResponse } from "../_shared/cors.ts";
 import { requireAuthenticatedUser } from "../_shared/auth.ts";
+import { reserveOpenAIBudget } from "../_shared/openai_budget.ts";
 
 Deno.serve(async (request: Request) => {
   if (request.method === "OPTIONS") {
@@ -35,6 +36,16 @@ Deno.serve(async (request: Request) => {
   if (!apiKey) {
     console.error("OPENAI_API_KEY is not configured.");
     return jsonResponse({ error: "Question embedding is not configured." }, 500);
+  }
+
+  // Reserve a conservative maximum using UTF-8 byte length before billing.
+  const inputBytes = new TextEncoder().encode(question).length + 64;
+  const budget = await reserveOpenAIBudget(inputBytes * 0.02 / 1_000_000);
+  if (budget === "exhausted") {
+    return jsonResponse({ error: "This app has reached its OpenAI usage budget." }, 429);
+  }
+  if (budget === "unavailable") {
+    return jsonResponse({ error: "OpenAI usage protection is temporarily unavailable." }, 503);
   }
 
   try {

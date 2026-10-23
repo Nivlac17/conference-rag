@@ -123,6 +123,14 @@ def main():
     for i in tqdm(range(0, len(records_to_embed), BATCH_SIZE), desc="Embedding"):
         batch = records_to_embed[i:i + BATCH_SIZE]
         batch_texts = [r['text'] for r in batch]
+        batch_token_upper_bound = utf8_byte_upper_bound(batch_texts)
+
+        # Persist the batch's worst-case cost before the request. If the process
+        # stops after OpenAI accepts it but before its response is saved, a
+        # resume still accounts for the possible charge.
+        usage['prompt_tokens'] += batch_token_upper_bound
+        with open(USAGE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(usage, f)
 
         try:
             response = client.embeddings.create(
@@ -131,11 +139,11 @@ def main():
             )
 
             batch_tokens = response.usage.prompt_tokens
-            if usage['prompt_tokens'] + batch_tokens > maximum_total_tokens:
+            if batch_tokens > batch_token_upper_bound:
                 raise RuntimeError('API token usage exceeded the conservative preflight bound.')
-            if embedding_cost(usage['prompt_tokens'] + batch_tokens) > MAX_EMBEDDING_SPEND_USD:
+            usage['prompt_tokens'] += batch_tokens - batch_token_upper_bound
+            if embedding_cost(usage['prompt_tokens']) > MAX_EMBEDDING_SPEND_USD:
                 raise RuntimeError('Embedding spend limit reached; stopping before another batch.')
-            usage['prompt_tokens'] += batch_tokens
 
             for record, item in zip(batch, response.data):
                 record_with_embedding = dict(record)
