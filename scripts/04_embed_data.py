@@ -32,7 +32,8 @@ from tqdm import tqdm
 
 INPUT_FILE = os.path.join('scripts', 'output', 'sentences.json')
 OUTPUT_FILE = os.path.join('scripts', 'output', 'sentences_with_embeddings.json')
-BATCH_SIZE = 100
+PARTIAL_FILE = OUTPUT_FILE + '.partial.jsonl'
+BATCH_SIZE = 500
 EMBEDDING_PRICE_PER_MILLION_TOKENS = 0.02
 # Reserve at least $0.60 of the user's $1 total cap for one live RAG answer.
 MAX_EMBEDDING_SPEND_USD = 0.40
@@ -46,6 +47,56 @@ def utf8_byte_upper_bound(texts):
 
 def embedding_cost(tokens):
     return tokens / 1_000_000 * EMBEDDING_PRICE_PER_MILLION_TOKENS
+
+
+def atomic_write_json(path, value):
+    temporary_path = path + '.tmp'
+    with open(temporary_path, 'w', encoding='utf-8') as f:
+        json.dump(value, f, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temporary_path, path)
+
+
+def load_existing_embeddings(records):
+    """Load complete JSONL checkpoints and discard only an interrupted last line."""
+    existing = []
+    if os.path.exists(PARTIAL_FILE):
+        valid_bytes = 0
+        with open(PARTIAL_FILE, 'rb') as f:
+            while True:
+                line = f.readline()
+                if not line:
+                    break
+                try:
+                    record = json.loads(line)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    break
+                if not record.get('embedding'):
+                    break
+                existing.append(record)
+                valid_bytes += len(line)
+        if os.path.getsize(PARTIAL_FILE) != valid_bytes:
+            with open(PARTIAL_FILE, 'r+b') as f:
+                f.truncate(valid_bytes)
+    elif os.path.exists(OUTPUT_FILE):
+        # Migrate an earlier JSON-array checkpoint to append-only JSONL.
+        with open(OUTPUT_FILE, 'r', encoding='utf-8') as f:
+            existing = json.load(f)
+        temporary_path = PARTIAL_FILE + '.tmp'
+        with open(temporary_path, 'w', encoding='utf-8') as f:
+            for record in existing:
+                f.write(json.dumps(record, ensure_ascii=False) + '\n')
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary_path, PARTIAL_FILE)
+
+    if len(existing) > len(records):
+        raise ValueError('Saved embeddings contain more rows than the source data.')
+    for index, record in enumerate(existing):
+        if record.get('id') != records[index].get('id'):
+            raise ValueError('Saved embeddings do not match the source record order.')
+    return existing
 
 
 def load_secrets():
@@ -68,21 +119,21 @@ def main():
     print(f"   Model: text-embedding-3-small (1,536 dimensions)")
     print(f"   Batch size: {BATCH_SIZE}\n")
 
-    # Check if there's a partial result we can resume from
-    already_embedded = 0
-    if os.path.exists(OUTPUT_FILE):
-        with open(OUTPUT_FILE, 'r', encoding='utf-8') as f:
-            existing = json.load(f)
-        already_embedded = len(existing)
-        if already_embedded >= len(records):
-            print(f"✅ All {len(records):,} sentences already have embeddings in {OUTPUT_FILE}")
-            print(f"   Delete {OUTPUT_FILE} to re-generate.")
-            return
-        print(f"   ⏩ Resuming from sentence {already_embedded:,} (found partial output)")
-        records_to_embed = records[already_embedded:]
-    else:
-        existing = []
-        records_to_embed = records
+    try:
+        existing = load_existing_embeddings(records)
+    except (OSError, ValueError, json.JSONDecodeError) as e:
+        print(f"❌ Could not safely resume saved embeddings ({type(e).__name__}).")
+        sys.exit(1)
+    already_embedded = len(existing)
+    if already_embedded >= len(records):
+        atomic_write_json(OUTPUT_FILE, existing)
+        if os.path.exists(PARTIAL_FILE):
+            os.remove(PARTIAL_FILE)
+        print(f"✅ All {len(records):,} sentences already have embeddings in {OUTPUT_FILE}")
+        return
+    if already_embedded:
+        print(f"   ⏩ Resuming from sentence {already_embedded:,} (saved JSONL checkpoint)")
+    records_to_embed = records[already_embedded:]
 
     # Use UTF-8 bytes as a conservative upper bound on token count before
     # making any billable calls. This leaves budget for the final RAG answer.
@@ -117,8 +168,7 @@ def main():
     secrets = load_secrets()
     client = OpenAI(api_key=secrets['OPENAI_API_KEY'], max_retries=0)
 
-    embedded_records = list(existing)  # Start from any partial results
-    errors = 0
+    embedded_records = list(existing)  # Used to produce the final JSON array once.
 
     for i in tqdm(range(0, len(records_to_embed), BATCH_SIZE), desc="Embedding"):
         batch = records_to_embed[i:i + BATCH_SIZE]
@@ -141,45 +191,49 @@ def main():
             batch_tokens = response.usage.prompt_tokens
             if batch_tokens > batch_token_upper_bound:
                 raise RuntimeError('API token usage exceeded the conservative preflight bound.')
+            if len(response.data) != len(batch):
+                raise RuntimeError('The embedding response did not contain one vector per input.')
+            if any(len(item.embedding) != 1536 for item in response.data):
+                raise RuntimeError('The embedding response contained an unexpected vector size.')
             usage['prompt_tokens'] += batch_tokens - batch_token_upper_bound
             if embedding_cost(usage['prompt_tokens']) > MAX_EMBEDDING_SPEND_USD:
                 raise RuntimeError('Embedding spend limit reached; stopping before another batch.')
 
+            new_records = []
             for record, item in zip(batch, response.data):
                 record_with_embedding = dict(record)
                 record_with_embedding['embedding'] = item.embedding
-                embedded_records.append(record_with_embedding)
+                new_records.append(record_with_embedding)
+
+            # Save the actual response usage before appending vectors. If the
+            # process stops while writing, the next run still accounts for the
+            # request and recovers only complete JSONL lines.
+            atomic_write_json(USAGE_FILE, usage)
+            with open(PARTIAL_FILE, 'a', encoding='utf-8') as f:
+                for record in new_records:
+                    f.write(json.dumps(record, ensure_ascii=False) + '\n')
+                f.flush()
+                os.fsync(f.fileno())
+            embedded_records.extend(new_records)
 
         except Exception as e:
             # Do not print SDK errors: authentication errors can echo a
             # partially masked API key. Stop instead of retrying later batches.
             print(f"\n   ❌ OpenAI request failed ({type(e).__name__}); stopping to avoid repeated calls.")
-            with open(USAGE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(usage, f)
-            with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-                json.dump(embedded_records, f, ensure_ascii=False)
             sys.exit(1)
-
-        # Checkpoint every batch so a crash does not repeat billable work.
-        with open(USAGE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(usage, f)
-        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-            json.dump(embedded_records, f, ensure_ascii=False)
 
         time.sleep(0.1)
 
-    # Final save
-    with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-        json.dump(embedded_records, f, ensure_ascii=False)
+    # Write the importer-compatible JSON array once, atomically.
+    atomic_write_json(OUTPUT_FILE, embedded_records)
+    if os.path.exists(PARTIAL_FILE):
+        os.remove(PARTIAL_FILE)
 
     file_size_mb = os.path.getsize(OUTPUT_FILE) / (1024 * 1024)
     print(f"\n✅ Embedding complete!")
     print(f"   Embedded: {len(embedded_records):,} sentences")
-    if errors:
-        print(f"   Errors:   {errors:,}")
-
     cost = embedding_cost(usage['prompt_tokens'])
-    print(f"   💰 Tracked embedding cost: ${cost:.4f} (actual API token usage)")
+    print(f"   💰 Tracked embedding spend ceiling: ${cost:.4f}")
 
     print(f"\n💾 Saved to {OUTPUT_FILE} ({file_size_mb:.1f} MB)")
     print(f"   This file is your safety net — embeddings are preserved on disk.")

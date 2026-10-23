@@ -29,6 +29,7 @@ from tqdm import tqdm
 
 
 INPUT_FILE = os.path.join('scripts', 'output', 'sentences_with_embeddings.json')
+SOURCE_FILE = os.path.join('scripts', 'output', 'sentences.json')
 BATCH_SIZE = 100
 
 
@@ -62,6 +63,21 @@ def main():
     # Never replace database contents with a partial or empty local result.
     if not records or without_embeddings:
         print("❌ Refusing to update the database: every source record must have an embedding.")
+        sys.exit(1)
+
+    if not os.path.exists(SOURCE_FILE):
+        print(f"❌ {SOURCE_FILE} is missing; cannot verify that the embedding file is complete.")
+        sys.exit(1)
+    with open(SOURCE_FILE, 'r', encoding='utf-8') as f:
+        source_records = json.load(f)
+    if len(records) != len(source_records) or any(
+        embedded.get('id') != source.get('id')
+        for embedded, source in zip(records, source_records)
+    ):
+        print("❌ Refusing to update the database: the embedding file is incomplete or out of order.")
+        sys.exit(1)
+    if any(not isinstance(record.get('embedding'), list) or len(record['embedding']) != 1536 for record in records):
+        print("❌ Refusing to update the database: one or more embedding vectors are malformed.")
         sys.exit(1)
 
     ids = [record.get('id') for record in records]
