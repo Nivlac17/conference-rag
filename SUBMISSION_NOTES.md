@@ -33,15 +33,17 @@ Keyword search uses SQL `ILIKE` and is useful when a reader remembers an exact p
 
 ### 4. RAG and fine-tuning
 
-RAG retrieves relevant source passages at question time and gives them to a language model as context. Fine-tuning updates model weights using examples, which can teach a model a style or repeated task pattern but does not automatically provide a current, inspectable source for each answer. RAG fits conference talks because the content can be searched and cited without training a model on the whole collection, and the source material can be updated independently. Fine-tuning may be a better fit when the main goal is consistent behavior, format, or style across many examples rather than looking up a changing collection of facts. [Add a course-specific point or a source you consulted if Canvas expects research citations.]
+RAG retrieves relevant source passages at question time and gives them to a language model as context. Fine-tuning trains a model on examples to change its behavior. It can teach a style or repeated task pattern, but it does not automatically provide a current, inspectable source for each answer. RAG fits conference talks because the content can be searched and cited without training a model on the whole collection, and the source material can be updated independently. Fine-tuning may be a better fit when the main goal is consistent behavior, format, or style across many examples rather than looking up a changing collection of facts. [OpenAI's fine-tuning guide](https://platform.openai.com/docs/guides/fine-tuning)
 
-### 5. AI-assisted development — personalize this section
+### 5. AI-assisted development — draft to review
 
-Complete these statements in your own words:
+My AI assistant helped me break the project into manageable steps, troubleshoot the Supabase setup, and explain how the database, authentication, Edge Functions, and RAG search fit together. It also helped me understand security concepts such as keeping private keys on the server and using Row Level Security to control database access.
 
-- The assistant helped me by: [specific useful example]
-- I had to guide or correct it when: [specific example]
-- I learned that: [what you now understand or would do differently]
+I had to guide the assistant by reminding it to follow the Canvas requirements, keep planned OpenAI spending under $1, and limit GitHub changes to my approved repository. I also corrected the OpenAI key after discovering that the earlier key was wrong. This showed me that AI assistance still needs clear constraints and human checking.
+
+I learned how a RAG application connects semantic search with an AI-generated answer, and why the retrieved passages and citations need to be checked. I also learned to verify the deployed configuration and sign-in flow instead of assuming that a local code setting automatically works on the live site.
+
+Review this draft and change anything that does not match your own experience or wording before submitting.
 
 ## Current verification state
 
@@ -50,4 +52,5 @@ Complete these statements in your own words:
 - The private OpenAI budget ledger is installed. Bulk embedding generation is capped at $0.40 and website calls are capped at $0.55, keeping this project's planned OpenAI usage under $1.
 - The saved OpenAI key authenticated successfully and is configured as a Supabase Edge Function secret.
 - The current `embed-question` and `generate-answer` functions are deployed with manual user authentication and budget reservations.
+- Supabase Auth now uses the GitHub Pages URL as its Site URL and allows that exact return URL plus the course's `http://localhost:5500/` development URL.
 - A signed-in live RAG question, its observed retrieval result, and the screenshot remain to be added after verification.
