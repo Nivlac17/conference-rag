@@ -4,9 +4,9 @@ Use these notes to finish the Canvas submission. Replace bracketed items with yo
 
 ## Deliverables
 
-- Repository: [paste your public fork URL]
-- Live site: `https://[your-github-username].github.io/conference-rag/`
-- Working RAG screenshot: [add after embeddings and an end-to-end query succeed]
+- Repository: https://github.com/Nivlac17/conference-rag
+- Live site: https://nivlac17.github.io/conference-rag/
+- Working RAG screenshot: [capture after the signed-in end-to-end query succeeds]
 - Custom feature: Matched Excerpt Viewer (description below)
 - Reflection: Review and personalize the draft answers below
 - Agent transcript: Attach or export the relevant Codex conversation as required by Canvas
@@ -29,7 +29,7 @@ Calling OpenAI directly from browser code would expose the API key to every site
 
 ### 3. Keyword search and semantic search
 
-Keyword search uses SQL `ILIKE` and is useful when a reader remembers an exact phrase, name, or term. It can miss a paraphrase that uses different words. Semantic search compares vector embeddings, so it can retrieve passages with related meaning even when they do not share the query's exact wording. For example, an exact search for “comfort in grief” can miss a passage that says “the Lord can strengthen us after a loss”; semantic search may find it because the wording is conceptually related. Embeddings represent text as vectors learned from language patterns, and cosine similarity ranks vectors pointing in similar directions. [After you run the app, add one query/result example you observed and say whether the searches behaved as expected.]
+Keyword search uses SQL `ILIKE` and is useful when a reader remembers an exact phrase, name, or term. It can miss a paraphrase that uses different words. Semantic search compares vector embeddings, so it can retrieve passages with related meaning even when they do not share the query's exact wording. For example, an exact search for “comfort in grief” can miss a passage that says “the Lord can strengthen us after a loss”; semantic search may find it because the wording is conceptually related. Embeddings represent text as vectors learned from language patterns, and cosine similarity ranks vectors pointing in similar directions. Add one example from your live query after verification: what you asked, which talks were retrieved, and whether the results matched what you expected.
 
 ### 4. RAG and fine-tuning
 
@@ -45,10 +45,9 @@ Complete these statements in your own words:
 
 ## Current verification state
 
-- Conference talk records were imported into Supabase (25,696 sentence records from 431 talks).
-- The `embed-question` and `generate-answer` Edge Functions have been deployed.
-- The deployed functions intentionally remain not ready until a valid OpenAI key is configured as a Supabase function secret.
-- The local `OPENAI_API_KEY` was rejected by OpenAI. No embeddings completed, and no OpenAI token usage was recorded. Replace it with a freshly copied OpenAI API key before resuming.
-- Re-run `scripts/01_create_schema.py` after the budget-gate update; it installs the private usage ledger and server-only reservation RPC required before the app can make billable calls.
-- Semantic/RAG queries still need an end-to-end verification and screenshot.
-- Add the RAG screenshot only after completing a real end-to-end query.
+- Supabase contains 25,696 sentence records from 431 talks, and all 25,696 rows have 1536-dimensional embeddings.
+- The schema applies RLS to the sentence and page-view tables. The browser uses only the public Supabase key; the service key and OpenAI key stay server-side.
+- The private OpenAI budget ledger is installed. Bulk embedding generation is capped at $0.40 and website calls are capped at $0.55, keeping this project's planned OpenAI usage under $1.
+- The saved OpenAI key authenticated successfully and is configured as a Supabase Edge Function secret.
+- The current `embed-question` and `generate-answer` functions are deployed with manual user authentication and budget reservations.
+- A signed-in live RAG question, its observed retrieval result, and the screenshot remain to be added after verification.

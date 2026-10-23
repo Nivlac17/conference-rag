@@ -24,6 +24,8 @@ import os
 import sys
 import time
 
+import requests
+
 from supabase import create_client
 from tqdm import tqdm
 
@@ -71,7 +73,8 @@ def main():
     with open(SOURCE_FILE, 'r', encoding='utf-8') as f:
         source_records = json.load(f)
     if len(records) != len(source_records) or any(
-        embedded.get('id') != source.get('id')
+        (embedded.get('talk_id'), embedded.get('sentence_num')) !=
+        (source.get('talk_id'), source.get('sentence_num'))
         for embedded, source in zip(records, source_records)
     ):
         print("❌ Refusing to update the database: the embedding file is incomplete or out of order.")
@@ -80,17 +83,26 @@ def main():
         print("❌ Refusing to update the database: one or more embedding vectors are malformed.")
         sys.exit(1)
 
-    ids = [record.get('id') for record in records]
-    if any(not record_id for record_id in ids) or len(set(ids)) != len(ids):
-        print("❌ Refusing to update the database: records must have unique IDs.")
+    sentence_keys = [(record.get('talk_id'), record.get('sentence_num')) for record in records]
+    if any(not talk_id or sentence_num is None for talk_id, sentence_num in sentence_keys) or len(set(sentence_keys)) != len(sentence_keys):
+        print("❌ Refusing to update the database: records must have unique talk/sentence keys.")
         sys.exit(1)
 
-    # Connect to Supabase
+    # Use a single HTTP session to reuse the connection and avoid saturating
+    # the free database with concurrent vector writes.
     public_config, secrets = load_config()
-    client = create_client(public_config['SUPABASE_URL'], secrets['SUPABASE_SERVICE_KEY'])
+    supabase_url = public_config['SUPABASE_URL'].rstrip('/')
+    service_key = secrets['SUPABASE_SERVICE_KEY']
+    headers = {
+        'apikey': service_key,
+        'Authorization': f'Bearer {service_key}',
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates,return=minimal',
+    }
+    client = create_client(supabase_url, service_key)
 
-    # Upsert on each record ID. This preserves existing rows and updates their
-    # vectors without truncating the table.
+    # Upsert on each talk/sentence natural key. This preserves existing rows
+    # and updates their vectors without truncating the table.
     print("\n" + "=" * 60)
     print("Updating database rows with embeddings (upsert)")
     print("=" * 60)
@@ -98,17 +110,30 @@ def main():
     # Batch import (much faster than individual updates!)
     print(f"\n   Importing {len(records):,} records in batches of {BATCH_SIZE}...\n")
 
+    batches = [records[i:i + BATCH_SIZE] for i in range(0, len(records), BATCH_SIZE)]
+    session = requests.Session()
     success = 0
-    for i in tqdm(range(0, len(records), BATCH_SIZE), desc="Importing"):
-        batch = records[i:i + BATCH_SIZE]
-        try:
-            client.table('sentence_embeddings').upsert(batch, on_conflict='id').execute()
-            success += len(batch)
-        except Exception as e:
-            print(f"\n❌ Database update failed at batch {i // BATCH_SIZE} ({type(e).__name__}); stopping.")
-            print(f"   {success:,} records were updated before the failure; rerun to resume safely.")
-            sys.exit(1)
-        time.sleep(0.1)
+    for index, batch in enumerate(tqdm(batches, desc="Importing")):
+        for attempt in range(5):
+            try:
+                response = session.post(
+                    f'{supabase_url}/rest/v1/sentence_embeddings',
+                    headers=headers,
+                    params={'on_conflict': 'talk_id,sentence_num'},
+                    json=batch,
+                    timeout=180,
+                )
+                if response.status_code >= 500 or response.status_code in (408, 429):
+                    raise requests.RequestException(f'Supabase returned HTTP {response.status_code}')
+                response.raise_for_status()
+                success += len(batch)
+                break
+            except requests.RequestException as e:
+                if attempt == 4:
+                    print(f"\n❌ Database update failed at batch {index} ({type(e).__name__}).")
+                    print(f"   {success:,} records were confirmed before the failure; rerun safely to retry.")
+                    sys.exit(1)
+                time.sleep(min(3 * (attempt + 1), 15))
 
     print(f"\n✅ Import complete!")
     print(f"   Success: {success:,}")
