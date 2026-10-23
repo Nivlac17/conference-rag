@@ -33,6 +33,19 @@ from tqdm import tqdm
 INPUT_FILE = os.path.join('scripts', 'output', 'sentences.json')
 OUTPUT_FILE = os.path.join('scripts', 'output', 'sentences_with_embeddings.json')
 BATCH_SIZE = 100
+EMBEDDING_PRICE_PER_MILLION_TOKENS = 0.02
+# Reserve at least $0.60 of the user's $1 total cap for one live RAG answer.
+MAX_EMBEDDING_SPEND_USD = 0.40
+USAGE_FILE = OUTPUT_FILE + '.usage.json'
+
+
+def utf8_byte_upper_bound(texts):
+    """A conservative token upper bound: each token encodes at least one byte."""
+    return sum(len(text.encode('utf-8')) for text in texts)
+
+
+def embedding_cost(tokens):
+    return tokens / 1_000_000 * EMBEDDING_PRICE_PER_MILLION_TOKENS
 
 
 def load_secrets():
@@ -71,9 +84,38 @@ def main():
         existing = []
         records_to_embed = records
 
+    # Use UTF-8 bytes as a conservative upper bound on token count before
+    # making any billable calls. This leaves budget for the final RAG answer.
+    remaining_texts = [r['text'] for r in records_to_embed]
+    remaining_upper_bound = utf8_byte_upper_bound(remaining_texts)
+    usage = {'prompt_tokens': 0}
+    if os.path.exists(USAGE_FILE):
+        with open(USAGE_FILE, 'r', encoding='utf-8') as f:
+            usage = json.load(f)
+    elif already_embedded:
+        # A legacy partial output has no usage ledger. Reserve its worst-case
+        # byte bound so resuming cannot silently exceed the embedding budget.
+        usage['prompt_tokens'] = utf8_byte_upper_bound(
+            [r['text'] for r in existing]
+        )
+
+    maximum_total_tokens = usage['prompt_tokens'] + remaining_upper_bound
+    maximum_total_cost = embedding_cost(maximum_total_tokens)
+    if maximum_total_cost > MAX_EMBEDDING_SPEND_USD:
+        print(
+            f"❌ Safe preflight estimate is ${maximum_total_cost:.4f}, "
+            f"above the ${MAX_EMBEDDING_SPEND_USD:.2f} embedding limit. "
+            "No API calls were made."
+        )
+        sys.exit(1)
+    print(
+        f"   Conservative maximum embedding cost: ${maximum_total_cost:.4f} "
+        f"(limit ${MAX_EMBEDDING_SPEND_USD:.2f})"
+    )
+
     # Generate embeddings
     secrets = load_secrets()
-    client = OpenAI(api_key=secrets['OPENAI_API_KEY'])
+    client = OpenAI(api_key=secrets['OPENAI_API_KEY'], max_retries=0)
 
     embedded_records = list(existing)  # Start from any partial results
     errors = 0
@@ -88,19 +130,33 @@ def main():
                 input=batch_texts
             )
 
+            batch_tokens = response.usage.prompt_tokens
+            if usage['prompt_tokens'] + batch_tokens > maximum_total_tokens:
+                raise RuntimeError('API token usage exceeded the conservative preflight bound.')
+            if embedding_cost(usage['prompt_tokens'] + batch_tokens) > MAX_EMBEDDING_SPEND_USD:
+                raise RuntimeError('Embedding spend limit reached; stopping before another batch.')
+            usage['prompt_tokens'] += batch_tokens
+
             for record, item in zip(batch, response.data):
                 record_with_embedding = dict(record)
                 record_with_embedding['embedding'] = item.embedding
                 embedded_records.append(record_with_embedding)
 
         except Exception as e:
-            print(f"\n   ❌ Batch error: {e}")
-            errors += len(batch)
-
-        # Save progress every 10 batches (in case of crash)
-        if (i // BATCH_SIZE + 1) % 10 == 0:
+            # Do not print SDK errors: authentication errors can echo a
+            # partially masked API key. Stop instead of retrying later batches.
+            print(f"\n   ❌ OpenAI request failed ({type(e).__name__}); stopping to avoid repeated calls.")
+            with open(USAGE_FILE, 'w', encoding='utf-8') as f:
+                json.dump(usage, f)
             with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
                 json.dump(embedded_records, f, ensure_ascii=False)
+            sys.exit(1)
+
+        # Checkpoint every batch so a crash does not repeat billable work.
+        with open(USAGE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(usage, f)
+        with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
+            json.dump(embedded_records, f, ensure_ascii=False)
 
         time.sleep(0.1)
 
@@ -114,11 +170,8 @@ def main():
     if errors:
         print(f"   Errors:   {errors:,}")
 
-    # Estimate cost
-    total_chars = sum(len(r['text']) for r in embedded_records)
-    est_tokens = total_chars / 4  # rough estimate
-    cost = (est_tokens / 1_000_000) * 0.020
-    print(f"   💰 Estimated cost: ${cost:.4f}")
+    cost = embedding_cost(usage['prompt_tokens'])
+    print(f"   💰 Tracked embedding cost: ${cost:.4f} (actual API token usage)")
 
     print(f"\n💾 Saved to {OUTPUT_FILE} ({file_size_mb:.1f} MB)")
     print(f"   This file is your safety net — embeddings are preserved on disk.")

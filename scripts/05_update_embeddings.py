@@ -1,9 +1,8 @@
 """
 Step 5: Import Embeddings to Database
 =========================================
-Reads scripts/output/sentences_with_embeddings.json and imports
-all records (text + embeddings) to Supabase, replacing any
-existing data.
+Reads scripts/output/sentences_with_embeddings.json and upserts
+all records (text + embeddings) to Supabase.
 
 After this step, SEMANTIC SEARCH will light up green on your site!
 
@@ -60,49 +59,43 @@ def main():
     if without_embeddings:
         print(f"   Without embeddings: {without_embeddings:,} (will be imported without)")
 
+    # Never replace database contents with a partial or empty local result.
+    if not records or without_embeddings:
+        print("❌ Refusing to update the database: every source record must have an embedding.")
+        sys.exit(1)
+
+    ids = [record.get('id') for record in records]
+    if any(not record_id for record_id in ids) or len(set(ids)) != len(ids):
+        print("❌ Refusing to update the database: records must have unique IDs.")
+        sys.exit(1)
+
     # Connect to Supabase
     public_config, secrets = load_config()
     client = create_client(public_config['SUPABASE_URL'], secrets['SUPABASE_SERVICE_KEY'])
 
-    # Truncate existing data and re-import everything
+    # Upsert on each record ID. This preserves existing rows and updates their
+    # vectors without truncating the table.
     print("\n" + "=" * 60)
-    print("Replacing database contents (truncate + re-import)")
+    print("Updating database rows with embeddings (upsert)")
     print("=" * 60)
-
-    try:
-        result = client.table('sentence_embeddings').select('id', count='exact').limit(1).execute()
-        existing_count = result.count or 0
-        if existing_count > 0:
-            print(f"   Truncating {existing_count:,} existing rows...")
-            client.table('sentence_embeddings').delete().neq('id', '00000000-0000-0000-0000-000000000000').execute()
-            print("   ✅ Table truncated.")
-        else:
-            print("   Table is empty — ready for import.")
-    except Exception as e:
-        print(f"   ⚠️ Could not check existing data: {e}")
-        print("   Proceeding with import anyway...")
 
     # Batch import (much faster than individual updates!)
     print(f"\n   Importing {len(records):,} records in batches of {BATCH_SIZE}...\n")
 
     success = 0
-    errors = 0
-
     for i in tqdm(range(0, len(records), BATCH_SIZE), desc="Importing"):
         batch = records[i:i + BATCH_SIZE]
         try:
-            client.table('sentence_embeddings').insert(batch).execute()
+            client.table('sentence_embeddings').upsert(batch, on_conflict='id').execute()
             success += len(batch)
         except Exception as e:
-            print(f"\nError at batch {i // BATCH_SIZE}: {e}")
-            errors += len(batch)
+            print(f"\n❌ Database update failed at batch {i // BATCH_SIZE} ({type(e).__name__}); stopping.")
+            print(f"   {success:,} records were updated before the failure; rerun to resume safely.")
+            sys.exit(1)
         time.sleep(0.1)
 
     print(f"\n✅ Import complete!")
     print(f"   Success: {success:,}")
-    if errors:
-        print(f"   Errors:  {errors:,}")
-
     # Verify
     result = client.table('sentence_embeddings').select('id', count='exact').limit(1).execute()
     total = result.count or 0
@@ -115,6 +108,10 @@ def main():
 
     print(f"\n   Total rows:          {total:,}")
     print(f"   Rows with embeddings: {with_emb:,}")
+
+    if with_emb < len(records):
+        print("❌ The database does not yet contain embeddings for every input record.")
+        sys.exit(1)
 
     print(f"\n🎉 Semantic Search is now ready!")
     print(f"   Refresh your site — the 🧠 Semantic Search panel should turn GREEN.")
